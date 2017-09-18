@@ -1,0 +1,254 @@
+## Emily Van Laarhoven and Naomi Day
+## CS304 Assignment 6, Flask 2
+## Due: 4/12/17 11:59pm
+
+from flask import Flask, render_template, flash, request, redirect, url_for
+import os
+import hwk6 #other python file that interacts with db
+
+app = Flask(__name__)
+app.secret_key = "aeurhgaliursnfsd" #secret key needed for flashing
+
+DATABASE = "evanlaar_db" #would change this line to wmdb
+
+@app.route('/')
+def home():
+    return render_template("base.html",page_title="hwk6 home")
+
+@app.route('/search/', methods=['POST','GET'])
+def search():
+    if request.method=="POST":
+        cursor = hwk6.cursor()
+        row = hwk6.search_partial_title(cursor,request.form['search-title'])
+        if row:
+            return redirect(url_for('update',tt=row['tt']))
+        else:
+            flash("Movie does not exist")
+    return render_template("search.html",page_title="hwk6 home")
+
+@app.route('/select/', methods=['POST','GET'])
+def select():
+    cursor = hwk6.cursor()
+    if request.method=="POST":
+        return redirect(url_for('update',tt=request.form['menu-tt'])) ###
+    list_missing = hwk6.find_missing(cursor)
+    return render_template("select.html",list_missing=list_missing)
+
+@app.route('/update/<tt>', methods=['POST','GET'])
+def update(tt):
+    cursor = hwk6.cursor()
+    if request.method=="POST":
+        if request.form['submit']=='update':
+            ## check if tt already in db
+            new_tt = request.form['movie-tt']
+            director = request.form['movie-director']
+            ## check that director exists in person
+            if (hwk6.check_director(cursor,director)):
+                ## if new tt, check that new tt exists in person
+                if (tt==new_tt): ##update movie if director, title, etc changed
+                    hwk6.update_movie(cursor,request.form,tt)        
+                    ## if tt has been updated and new_tt already exists in db flash error
+                elif (tt != new_tt and not hwk6.check_tt(cursor,new_tt)):
+                     flash("Movie already exists") ## do not update
+                else:
+                    ## update movie - there's a new tt
+                    hwk6.update_movie(cursor,request.form,tt)
+                    flash("Movie updated successfully")
+                    return redirect(url_for("update",tt=new_tt))
+            else:
+                ## director does not exists in person table
+                flash("Director does not exist")
+        if request.form['submit']=='delete':
+            # delete movie using tt
+            if hwk6.delete_movie(cursor,tt):
+                flash("Movie was deleted successfully")
+                return redirect(url_for("home"))
+    tt_list = hwk6.search_tt(cursor,tt) 
+    if tt_list[4]==None:
+        tt_list[4]="null"
+    ## removed unnecessary redirects, XSS attack test 20 still failing
+    return render_template("update.html",tt_list=tt_list)
+
+if __name__ == '__main__':
+    app.debug = True
+    app.run('0.0.0.0',os.getuid())
+## Emily Van Laarhoven and Naomi Day
+## CS304 Assignment 6, Flask 2
+## Due: 4/12/17 at 11:59pm
+
+import dbconn2
+import MySQLdb
+import os
+from evanlaardsn import DSN
+
+## global variables
+DATABASE = 'evanlaar_db'
+ADDED_BY = '1261' #emily uid in wmdb 
+DEBUG = False
+
+def cursor(database=DATABASE):
+    '''returns a cursor to the database'''
+    DSN['db'] = database #set db in DSN dict to evanlaar_db
+    conn = dbconn2.connect(DSN)
+    return conn.cursor(MySQLdb.cursors.DictCursor)
+
+def search_partial_title(cursor,search_term):
+    '''returns the first closest match tt to partial title searched'''
+    q = "select tt from movie where title like %s"
+    search_pattern = "%"+search_term+"%"
+    cursor.execute(q,[search_pattern])
+    return cursor.fetchone()
+
+def search_tt(cursor,tt):
+    '''returns all info for movie with given tt'''
+    q = "select title, tt, `release`, addedby, director from movie where tt=%s;"
+    cursor.execute(q,[tt])
+    row = cursor.fetchone()
+    tt_list = []
+    tt_list.append(row['title'])
+    tt_list.append(row['tt'])
+    tt_list.append(row['release'])
+    tt_list.append(row['addedby'])
+    tt_list.append(row['director'])
+    if row['director'] is None:
+        tt_list.append("None Specified")
+    else:
+        q_dir = "select name from person where nm=%s"
+        cursor.execute(q_dir,[row['director']])
+        row_dir = cursor.fetchone()
+        tt_list.append(row_dir['name'])
+    return tt_list
+
+def find_missing(cursor):
+    '''returns all titles with null director or null release year'''
+    q = "select title,tt from movie where director is null or `release` is null"
+    cursor.execute(q)
+    query_list =  cursor.fetchall()
+    final_dict = {title['tt']:title['title'] for title in query_list}
+    return final_dict
+
+def delete_movie(cursor, tt):
+    '''deletes the movie with the given tt from the database'''
+    q = "delete from movie where tt=%s"
+    cursor.execute(q,[tt])
+    return True
+
+def check_tt(cursor,tt):
+    '''checks if the tt in the form is already in the database'''
+    q = "select * from movie where tt=%s"
+    cursor.execute(q,[tt])
+    if cursor.fetchone():
+        return False ## tt is already in db
+    else:
+        return True
+
+def check_director(cursor,dirId):
+    '''checks if the given director id exists already in db'''
+    if dirId != "null":
+        q = "select * from person where nm=%s"
+        cursor.execute(q,[dirId])
+        row = cursor.fetchone()
+        if row:
+            return True ## director already in person
+        else:
+            return False
+    return True
+        
+def update_movie(cursor,form_data,old_tt):
+    '''updates movie data in db, return true if success'''
+    q = "update movie set tt=%s,title=%s, `release`=%s, director=%s, addedby=%s where tt=%s;"
+    if form_data['movie-director']=="null":
+        director = None
+    else:
+        director = form_data['movie-director']
+    cursor.execute(q,[form_data['movie-tt'],form_data['movie-title'],form_data['movie-release'],director,form_data['movie-addedby'],old_tt])
+    return True # add error handle
+<!doctype html>
+
+<!-- Emily Van Laarhoven and Naomi Day
+base.html template for CS304 HWK6
+-->
+
+<html lang='en'>
+<head>
+    <meta charset='utf-8'>
+    <meta name=author content="Emily Van Laarhoven and Naomi Day">
+    <title>{{ page_title }}</title>
+    {% block head_stuff %} {% endblock %}
+</head>
+<body>
+
+{% with messages = get_flashed_messages() %}
+    {% if messages %}
+        <div id="messages">
+        {% for msg in messages %}
+            <p>{{msg}}</p>
+        {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<ul>
+  <li> <a href = "/">Home </a> </li>
+  <li> <a href = "/search/">Search by Title </a> </li>
+  <li> <a href = "/select/">Select from Incomplete Movies </a> </li>
+</ul>            
+
+{% block main_content %}
+<h1>WMDB Interactions</h1>
+{% endblock %}
+
+</body>
+</html>
+<!-- Emily Van Laarhoven and Naomi Day
+search.html extends base.html to display /search/ template
+-->
+
+{% extends "base.html" %}
+
+{% block main_content %}
+<h1>Search by Title</h1>
+
+<form id="search-form" method="post" action="/search/">
+  <p><label>Title: <input required name="search-title"></label></p>
+  <input type="submit" value="Search">
+</form>
+
+{% endblock %}
+{% extends "base.html" %}
+
+{% block main_content %}
+
+<h1>Select Movie</h1>
+
+<form id="select-form" method="post" action="/select/">
+    <p><label>Movies without release dates or directors: <select name="menu-tt"></label></p>
+    {% for tt in list_missing %}
+         <option value="{{tt}}">{{list_missing[tt]}}</option> 
+    {% endfor %}
+    </select>
+    <p><input type="submit" name="submit" value="Choose one">
+</form>
+
+{% endblock %}
+<!-- Emily Van Laarhoven and Naomi Day
+update.html extends base.html to display form with movie values
+-->
+
+{% extends "base.html" %}
+
+{% block main_content %}
+<h1>Update Movie</h1>
+
+<form id="update-form" method="post"> <!-- dont know action -->
+  <p><label>Title: <input required name="movie-title" value= "{{ tt_list[0] }}" ></label></p>
+  <p><label>Movie Id: <input required name="movie-tt" value= {{ tt_list[1] }} ></label></p>
+  <p><label>Release year: <input required name="movie-release" value= {{ tt_list[2] }} ></label></p>
+  <p><label>Added By: <input required name="movie-addedby" value = {{ tt_list[3] }} ></label></p>
+  <p><label>Director Id: <input required name="movie-director" value = {{ tt_list[4] }} ></label></p>
+  <p> Director: {{ tt_list[5] }} </p>
+  <input type="submit" name="submit" value="update">
+  <input type="submit" name="submit" value="delete">
+</form>
+
+{% endblock %}

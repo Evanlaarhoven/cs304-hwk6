@@ -1,0 +1,91 @@
+## Emily Van Laarhoven and Naomi Day
+## CS304 Assignment 6, Flask 2
+## Due: 4/12/17 at 11:59pm
+
+import dbconn2
+import MySQLdb
+import os
+from evanlaardsn import DSN
+
+## global variables
+DATABASE = 'evanlaar_db'
+ADDED_BY = '1261' #emily uid in wmdb 
+DEBUG = False
+
+def cursor(database=DATABASE):
+    '''returns a cursor to the database'''
+    DSN['db'] = database #set db in DSN dict to evanlaar_db
+    conn = dbconn2.connect(DSN)
+    return conn.cursor(MySQLdb.cursors.DictCursor)
+
+def search_partial_title(cursor,search_term):
+    '''returns the first closest match tt to partial title searched'''
+    q = "select tt from movie where title like %s"
+    search_pattern = "%"+search_term+"%"
+    cursor.execute(q,[search_pattern])
+    return cursor.fetchone()
+
+def search_tt(cursor,tt):
+    '''returns all info for movie with given tt'''
+    q = "select title, tt, `release`, addedby, director from movie where tt=%s;"
+    cursor.execute(q,[tt])
+    row = cursor.fetchone()
+    tt_list = []
+    tt_list.append(row['title'])
+    tt_list.append(row['tt'])
+    tt_list.append(row['release'])
+    tt_list.append(row['addedby'])
+    tt_list.append(row['director'])
+    if row['director'] is None:
+        tt_list.append("None Specified")
+    else:
+        q_dir = "select name from person where nm=%s"
+        cursor.execute(q_dir,[row['director']])
+        row_dir = cursor.fetchone()
+        tt_list.append(row_dir['name'])
+    return tt_list
+
+def find_missing(cursor):
+    '''returns all titles with null director or null release year'''
+    q = "select title,tt from movie where director is null or `release` is null"
+    cursor.execute(q)
+    query_list =  cursor.fetchall()
+    final_dict = {title['tt']:title['title'] for title in query_list}
+    return final_dict
+
+def delete_movie(cursor, tt):
+    '''deletes the movie with the given tt from the database'''
+    q = "delete from movie where tt=%s"
+    cursor.execute(q,[tt])
+    return True
+
+def check_tt(cursor,tt):
+    '''checks if the tt in the form is already in the database'''
+    q = "select * from movie where tt=%s"
+    cursor.execute(q,[tt])
+    if cursor.fetchone():
+        return False ## tt is already in db
+    else:
+        return True
+
+def check_director(cursor,dirId):
+    '''checks if the given director id exists already in db'''
+    if dirId != "null":
+        q = "select * from person where nm=%s"
+        cursor.execute(q,[dirId])
+        row = cursor.fetchone()
+        if row:
+            return True ## director already in person
+        else:
+            return False
+    return True
+        
+def update_movie(cursor,form_data,old_tt):
+    '''updates movie data in db, return true if success'''
+    q = "update movie set tt=%s,title=%s, `release`=%s, director=%s, addedby=%s where tt=%s;"
+    if form_data['movie-director']=="null":
+        director = None
+    else:
+        director = form_data['movie-director']
+    cursor.execute(q,[form_data['movie-tt'],form_data['movie-title'],form_data['movie-release'],director,form_data['movie-addedby'],old_tt])
+    return True # add error handle
